@@ -73,7 +73,11 @@ func (this *FMP4Creater) handleVideoTag(tag *flvFileReader.FlvTag) (slice *FMP4S
 }
 
 func (this *FMP4Creater) createVideoInitSeg(tag *flvFileReader.FlvTag) (slice *FMP4Slice) {
-	log.Fatal("vvv0")
+	slice = &FMP4Slice{}
+	slice.Video = true
+	slice.Idx = -1
+	segEncoder := flvFileReader.AMF0Encoder{}
+	segEncoder.Init()
 	return
 }
 

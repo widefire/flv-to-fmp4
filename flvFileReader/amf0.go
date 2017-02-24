@@ -1,4 +1,4 @@
-package amf
+package flvFileReader
 
 //amf0编解码
 import (
