@@ -30,7 +30,7 @@ const (
 
 type FMP4Slice struct {
 	Data  []byte
-	Idx   int  //-1 for init
+	Idx   int  //1 base,0 for init
 	Video bool //audio or video
 }
 
@@ -104,7 +104,8 @@ func (this *FMP4Creater) handleVideoTag(tag *flvFileReader.FlvTag) (slice *FMP4S
 func (this *FMP4Creater) createVideoInitSeg(tag *flvFileReader.FlvTag) (slice *FMP4Slice) {
 	slice = &FMP4Slice{}
 	slice.Video = true
-	slice.Idx = -1
+	slice.Idx = 0
+	this.videoIdx++
 	segEncoder := flvFileReader.AMF0Encoder{}
 	segEncoder.Init()
 	//ftyp
@@ -311,7 +312,49 @@ func (this *FMP4Creater) createVideoInitSeg(tag *flvFileReader.FlvTag) (slice *F
 }
 
 func (this *FMP4Creater) createVideoSeg(tag *flvFileReader.FlvTag) (slice *FMP4Slice) {
-	log.Fatal("vvv1")
+	slice = &FMP4Slice{}
+	slice.Video = true
+	slice.Idx = this.videoIdx
+	this.videoIdx++
+	segEncoder := flvFileReader.AMF0Encoder{}
+	segEncoder.Init()
+
+	videBox := &MP4Box{}
+	//moof
+	videBox.Push([]byte("moof"))
+	//mfhd
+	videBox.Push([]byte("mfhd"))
+	videBox.Push4Bytes(0) //version and flags
+	videBox.Push4Bytes(uint32(slice.Idx))
+	//mfhd
+	videBox.Pop()
+	//traf
+	videBox.Push([]byte("traf"))
+	//tfhd
+	videBox.Push([]byte("tfhd"))
+	videBox.Push4Bytes(0)          //version and flags
+	videBox.Push4Bytes(video_trak) //track
+	//!tfhd
+	videBox.Pop()
+	//tfdt
+	videBox.Push([]byte("tfdt"))
+	videBox.Push4Bytes(0)
+	videBox.Push4Bytes(tag.Timestamp)
+	//!tfdt
+	videBox.Pop()
+	//trun
+	videBox.Push([]byte("trun"))
+	videBox.Push4Bytes(0xf01) //0x01:data off set; 0x100|0x200|0x400|0x800=0xf
+	videBox.Push4Bytes(1)     //1 sample
+	videBox.Push4Bytes(0x79)  //data offset
+	videBox.Push4Bytes(0x21)//sample flags
+	trun 和 MP3未完成 先弄MP3
+	//!trun
+	videBox.Pop()
+	//!traf
+	videBox.Pop()
+	//!moof
+	videBox.Pop()
 	return
 }
 
@@ -332,7 +375,8 @@ func (this *FMP4Creater) createAudioInitSeg(tag *flvFileReader.FlvTag) (slice *F
 
 	slice = &FMP4Slice{}
 	slice.Video = true
-	slice.Idx = -1
+	slice.Idx = 0
+	this.audioIdx++
 	segEncoder := flvFileReader.AMF0Encoder{}
 	segEncoder.Init()
 	//ftyp
