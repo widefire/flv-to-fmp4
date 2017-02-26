@@ -17,7 +17,7 @@ func main() {
 		if tag == nil {
 			return
 		}
-		log.Println(tag.Timestamp)
+		//log.Println(tag.Timestamp)
 		fmp4Sinker.AddFlvTag(tag)
 	}
 }
