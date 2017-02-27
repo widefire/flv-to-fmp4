@@ -51,6 +51,14 @@ type FMP4Creater struct {
 	audioType       int
 }
 
+type FMP4Flags struct {
+	IsLeading           uint32
+	SampleDependsOn     uint32
+	SampleIsDependedOn  uint32
+	SampleHasRedundancy uint32
+	IsAsync             uint32
+}
+
 func (this *FMP4Creater) AddFlvTag(tag *flvFileReader.FlvTag) (slice *FMP4Slice) {
 	switch tag.TagType {
 	case flvFileReader.FLV_TAG_ScriptData:
@@ -322,6 +330,21 @@ func (this *FMP4Creater) createVideoSeg(tag *flvFileReader.FlvTag) (slice *FMP4S
 	segEncoder := flvFileReader.AMF0Encoder{}
 	segEncoder.Init()
 
+	flags := &FMP4Flags{}
+	flags.IsLeading = 0
+	flags.SampleHasRedundancy = 0
+	if tag.Data[0] == 0x17 {
+		flags.SampleDependsOn = 2
+		flags.SampleIsDependedOn = 1
+		flags.IsAsync = 0
+	} else if tag.Data[0] == 0x27 {
+		flags.SampleDependsOn = 1
+		flags.SampleIsDependedOn = 0
+		flags.IsAsync = 1
+	} else {
+		log.Fatal("invalid video")
+	}
+
 	videBox := &MP4Box{}
 	//moof
 	videBox.Push([]byte("moof"))
@@ -347,23 +370,31 @@ func (this *FMP4Creater) createVideoSeg(tag *flvFileReader.FlvTag) (slice *FMP4S
 	videBox.Pop()
 	//trun
 	videBox.Push([]byte("trun"))
-	videBox.Push4Bytes(0x1 | 0x100 | 0x200 | 0x800) //offset,duration,samplesize,composition
-	videBox.Push4Bytes(1)                           //1 sample
-	videBox.Push4Bytes(108 + 1)                     //offset:if base-is-moof ,data offset,from moov begin to mdat data,so now base is first byte
+	videBox.Push4Bytes(0xf01) //offset,duration,samplesize,composition
+	videBox.Push4Bytes(1)     //1 sample
+	videBox.Push4Bytes(0x79)  //offset:if base-is-moof ,data offset,from moov begin to mdat data,so now base is first byte
 	if tag.Timestamp-this.videoLastTime == 0 {
 		//no duration,just a first frame
 		videBox.Push4Bytes(uint32(1000 / this.fps)) //duration
 		log.Println(uint32(1000 / this.fps))
 	} else {
-		videBox.Push4Bytes(tag.Timestamp - this.videoLastTime)
+		videBox.Push4Bytes(tag.Timestamp - this.videoLastTime) //duration
 		log.Println(tag.Timestamp - this.videoLastTime)
 	}
 	this.videoLastTime = tag.Timestamp
-	videBox.Push4Bytes(0)                         //duration
 	videBox.Push4Bytes(uint32(len(tag.Data) - 5)) //sample size,mdat data size
+	videBox.PushByte(uint8((flags.IsLeading << 2) | flags.SampleDependsOn))
+	videBox.PushByte(uint8((flags.SampleIsDependedOn << 6) | (flags.SampleHasRedundancy << 4) | flags.IsAsync))
+	videBox.Push2Bytes(0)
 	composition := (uint32(tag.Data[2]) << 16) | (uint32(tag.Data[3]) << 8) | (uint32(tag.Data[4]) << 0)
 	videBox.Push4Bytes(composition) //sample_composition_time
 	//!trun
+	videBox.Pop()
+	//sdtp
+	videBox.Push([]byte("sdtp"))
+	videBox.Push4Bytes(0)
+	videBox.PushByte(uint8((flags.IsLeading << 6) | (flags.SampleDependsOn << 4) | (flags.SampleIsDependedOn << 2) | (flags.SampleHasRedundancy)))
+	//!sdtp
 	videBox.Pop()
 	//!traf
 	videBox.Pop()
