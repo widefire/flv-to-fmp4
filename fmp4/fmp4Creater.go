@@ -5,6 +5,7 @@ import (
 	"flvFileReader"
 	"fmt"
 	"log"
+	"mp3"
 	"os"
 	"strconv"
 )
@@ -34,6 +35,11 @@ type FMP4Slice struct {
 	Idx   int  //0 base,-1 for init
 	Video bool //audio or video
 }
+
+//cts:composition time
+//dts:decode time:frame timestamp
+//pts:Presentation  time
+//pts=dts+cts,duraton base on pts
 
 type FMP4Creater struct {
 	videoIdx      int
@@ -90,12 +96,12 @@ func (this *FMP4Creater) handleVideoTag(tag *flvFileReader.FlvTag) (slice *FMP4S
 		return
 	}
 	pktType := tag.Data[1]
-	CompositionTime := 0
+	//CompositionTime := 0
 	cur := 2
-	if pktType == 1 {
-		CompositionTime = ((int(tag.Data[cur+0])) << 16) | ((int(tag.Data[cur+1])) << 8) | ((int(tag.Data[cur+2])) << 0)
-		log.Println(CompositionTime)
-	}
+	//	if pktType == 1 {
+	//		CompositionTime = ((int(tag.Data[cur+0])) << 16) | ((int(tag.Data[cur+1])) << 8) | ((int(tag.Data[cur+2])) << 0)
+	//		log.Println(CompositionTime)
+	//	}
 	cur += 3
 	if this.videoInited == false {
 		if pktType != 0 {
@@ -135,7 +141,7 @@ func (this *FMP4Creater) createVideoInitSeg(tag *flvFileReader.FlvTag) (slice *F
 	moovBox := &MP4Box{}
 	moovBox.Push([]byte("moov"))
 	//mvhd
-	duration := uint32(0xffffffff)
+	duration := uint32(0)
 	moovBox.Push([]byte("mvhd"))
 	moovBox.Push4Bytes(0)        //version
 	moovBox.Push4Bytes(0)        //creation_time
@@ -376,17 +382,19 @@ func (this *FMP4Creater) createVideoSeg(tag *flvFileReader.FlvTag) (slice *FMP4S
 	if tag.Timestamp-this.videoLastTime == 0 {
 		//no duration,just a first frame
 		videBox.Push4Bytes(uint32(1000 / this.fps)) //duration
-		log.Println(uint32(1000 / this.fps))
+		//log.Println(uint32(1000 / this.fps))
 	} else {
 		videBox.Push4Bytes(tag.Timestamp - this.videoLastTime) //duration
-		log.Println(tag.Timestamp - this.videoLastTime)
+		//log.Println(tag.Timestamp - this.videoLastTime)
+		//log.Println(this.videoLastTime)
 	}
+	composition := (uint32(tag.Data[2]) << 16) | (uint32(tag.Data[3]) << 8) | (uint32(tag.Data[4]) << 0)
+	//log.Println(fmt.Sprintf("timestame:%d  composition:%d duration:%d", tag.Timestamp, composition, tag.Timestamp-this.videoLastTime))
 	this.videoLastTime = tag.Timestamp
 	videBox.Push4Bytes(uint32(len(tag.Data) - 5)) //sample size,mdat data size
 	videBox.PushByte(uint8((flags.IsLeading << 2) | flags.SampleDependsOn))
 	videBox.PushByte(uint8((flags.SampleIsDependedOn << 6) | (flags.SampleHasRedundancy << 4) | flags.IsAsync))
 	videBox.Push2Bytes(0)
-	composition := (uint32(tag.Data[2]) << 16) | (uint32(tag.Data[3]) << 8) | (uint32(tag.Data[4]) << 0)
 	videBox.Push4Bytes(composition) //sample_composition_time
 	//!trun
 	videBox.Pop()
@@ -441,7 +449,10 @@ func (this *FMP4Creater) createAudioInitSeg(tag *flvFileReader.FlvTag) (slice *F
 	switch this.audioType {
 	case MP3:
 		this.audioSampleSize = 1152
-		log.Fatal("mp3 audiso sample size not processed")
+		mp3Header, _ := mp3.ParseMP3Header(tag.Data[1:])
+		if mp3Header != nil {
+			this.audioSampleRate = uint32(mp3Header.SampleRate)
+		}
 	case AAC:
 		this.audioSampleSize = 1024
 		asc := aac.GenerateAudioSpecificConfig(tag.Data[2:])
@@ -469,16 +480,17 @@ func (this *FMP4Creater) createAudioInitSeg(tag *flvFileReader.FlvTag) (slice *F
 		log.Println(err.Error())
 		return
 	}
+	duration := uint32(0)
 	//moov
 	moovBox := &MP4Box{}
 	moovBox.Push([]byte("moov"))
 	//mvhd
 	moovBox.Push([]byte("mvhd"))
-	moovBox.Push4Bytes(0)          //version
-	moovBox.Push4Bytes(0)          //creation_time
-	moovBox.Push4Bytes(0)          //modification_time
-	moovBox.Push4Bytes(1000)       //time_scale
-	moovBox.Push4Bytes(0xffffffff) //duration 1s
+	moovBox.Push4Bytes(0)        //version
+	moovBox.Push4Bytes(0)        //creation_time
+	moovBox.Push4Bytes(0)        //modification_time
+	moovBox.Push4Bytes(1000)     //time_scale
+	moovBox.Push4Bytes(duration) //duration 1s
 	log.Println("duration 0xffffffff now")
 	moovBox.Push4Bytes(0x00010000) //rate
 	moovBox.Push2Bytes(0x0100)     //volume
@@ -512,7 +524,7 @@ func (this *FMP4Creater) createAudioInitSeg(tag *flvFileReader.FlvTag) (slice *F
 	moovBox.Push4Bytes(0)
 	moovBox.Push4Bytes(audio_trak) //track id
 	moovBox.Push4Bytes(0)          //reserved
-	moovBox.Push4Bytes(0xffffffff) //duration
+	moovBox.Push4Bytes(duration)   //duration
 	log.Println("duration 0xffffffff")
 	moovBox.Push8Bytes(0)          //reserved
 	moovBox.Push2Bytes(0)          //layer
@@ -539,11 +551,15 @@ func (this *FMP4Creater) createAudioInitSeg(tag *flvFileReader.FlvTag) (slice *F
 	moovBox.Push4Bytes(0) //version and flag
 	moovBox.Push4Bytes(0) //creation_time
 	moovBox.Push4Bytes(0) //modification_time
-	log.Println("maybe to audio sample hz")
-	moovBox.Push4Bytes(1000)       //time scale
-	moovBox.Push4Bytes(0xffffffff) //duration
+	log.Println("maybe to audio sample hz,now use Video time")
+	moovBox.Push4Bytes(1000)     //time scale
+	moovBox.Push4Bytes(duration) //duration
 	log.Println("duration 0xffffffff")
-	moovBox.Push4Bytes(0x55c40000) //language und
+	if this.audioType == MP3 {
+		moovBox.Push4Bytes(0x55c40000)
+	} else {
+		moovBox.Push4Bytes(0x55c40000) //language und
+	}
 	//!mdhd
 	moovBox.Pop()
 	//hdlr
@@ -554,7 +570,7 @@ func (this *FMP4Creater) createAudioInitSeg(tag *flvFileReader.FlvTag) (slice *F
 	moovBox.Push4Bytes(0) //reserved
 	moovBox.Push4Bytes(0) //reserved
 	moovBox.Push4Bytes(0) //reserved
-	moovBox.PushBytes([]byte("AudioHandler"))
+	moovBox.PushBytes([]byte("SoundHandler"))
 	moovBox.PushByte(0)
 	//!hdlr
 	moovBox.Pop()
@@ -664,52 +680,52 @@ func (this *FMP4Creater) createAudioSeg(tag *flvFileReader.FlvTag) (slice *FMP4S
 	segEncoder := flvFileReader.AMF0Encoder{}
 	segEncoder.Init()
 
-	videBox := &MP4Box{}
+	sounBox := &MP4Box{}
 	//moof
-	videBox.Push([]byte("moof"))
+	sounBox.Push([]byte("moof"))
 	//mfhd
-	videBox.Push([]byte("mfhd"))
-	videBox.Push4Bytes(0) //version and flags
-	videBox.Push4Bytes(uint32(slice.Idx))
+	sounBox.Push([]byte("mfhd"))
+	sounBox.Push4Bytes(0) //version and flags
+	sounBox.Push4Bytes(uint32(slice.Idx))
 	//mfhd
-	videBox.Pop()
+	sounBox.Pop()
 	//traf
-	videBox.Push([]byte("traf"))
+	sounBox.Push([]byte("traf"))
 	//tfhd
-	videBox.Push([]byte("tfhd"))
-	videBox.Push4Bytes(0)          //version and flags,no default-base-is-moof
-	videBox.Push4Bytes(video_trak) //track
+	sounBox.Push([]byte("tfhd"))
+	sounBox.Push4Bytes(0)          //version and flags,no default-base-is-moof
+	sounBox.Push4Bytes(video_trak) //track
 	//!tfhd
-	videBox.Pop()
+	sounBox.Pop()
 	//tfdt
-	videBox.Push([]byte("tfdt"))
-	videBox.Push4Bytes(0)
-	videBox.Push4Bytes(tag.Timestamp)
+	sounBox.Push([]byte("tfdt"))
+	sounBox.Push4Bytes(0)
+	sounBox.Push4Bytes(tag.Timestamp)
 	//!tfdt
-	videBox.Pop()
+	sounBox.Pop()
 	//trun
-	videBox.Push([]byte("trun"))
-	videBox.Push4Bytes(0x1 | 0x100 | 0x200 | 0x800) //offset,duration,samplesize,composition
-	videBox.Push4Bytes(1)                           //1 sample
-	videBox.Push4Bytes(108 + 1)                     //offset:if base-is-moof ,data offset,from moov begin to mdat data,so now base is first byte
-	if tag.Timestamp-this.videoLastTime == 0 {
+	sounBox.Push([]byte("trun"))
+	sounBox.Push4Bytes(0x1 | 0x100 | 0x200 | 0x800) //offset,duration,samplesize,composition
+	sounBox.Push4Bytes(1)                           //1 sample
+	sounBox.Push4Bytes(108 + 1)                     //offset:if base-is-moof ,data offset,from moov begin to mdat data,so now base is first byte
+	if tag.Timestamp-this.audioLastTime == 0 {
 		//no duration,just a first frame
-		videBox.Push4Bytes(uint32(1000 / this.fps)) //duration
+		sounBox.Push4Bytes(uint32(1000 / this.fps)) //duration
 	} else {
-		videBox.Push4Bytes(tag.Timestamp - this.videoLastTime)
+		sounBox.Push4Bytes(tag.Timestamp - this.audioLastTime)
 	}
-	this.videoLastTime = tag.Timestamp
-	videBox.Push4Bytes(0)                         //duration
-	videBox.Push4Bytes(uint32(len(tag.Data) - 5)) //sample size,mdat data size
+	this.audioLastTime = tag.Timestamp
+	sounBox.Push4Bytes(0)                         //duration
+	sounBox.Push4Bytes(uint32(len(tag.Data) - 5)) //sample size,mdat data size
 	composition := (uint32(tag.Data[2]) << 16) | (uint32(tag.Data[3]) << 8) | (uint32(tag.Data[4]) << 0)
-	videBox.Push4Bytes(composition) //sample_composition_time
+	sounBox.Push4Bytes(composition) //sample_composition_time
 	//!trun
-	videBox.Pop()
+	sounBox.Pop()
 	//!traf
-	videBox.Pop()
+	sounBox.Pop()
 	//!moof
-	videBox.Pop()
-	err := segEncoder.AppendByteArray(videBox.Flush())
+	sounBox.Pop()
+	err := segEncoder.AppendByteArray(sounBox.Flush())
 	if err != nil {
 		log.Println(err.Error())
 		return
