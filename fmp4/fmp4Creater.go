@@ -732,7 +732,8 @@ func (this *FMP4Creater) createAudioSeg(tag *flvFileReader.FlvTag) (slice *FMP4S
 	} else {
 		sounBox.Push4Bytes(tag.Timestamp - this.audioLastTime)
 	}
-
+	//计算每一个采样的时长，根据采样率和samplerate来算
+	1024 / 44
 	log.Println(tag.Timestamp - this.audioLastTime)
 	this.audioLastTime = tag.Timestamp
 	sounBox.Push4Bytes(uint32(len(tag.Data) - dataPrefixLength)) //sample size
