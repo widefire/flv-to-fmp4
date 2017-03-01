@@ -1,12 +1,15 @@
 package aac
 
 const (
-	AAC_Main = 1
-	AAC_LC   = 2
-	AAC_SSR  = 3
-	ADT_Main = 0
-	ADT_LC   = 1
-	ADT_SSR  = 2
+	AAC_Main      = 1
+	AAC_LC        = 2
+	AAC_SSR       = 3
+	AAC_LTP       = 4
+	AAC_HE_OR_SBR = 5
+	AAC_SCALABLE  = 6
+	ADT_Main      = 0
+	ADT_LC        = 1
+	ADT_SSR       = 2
 )
 
 type AudioSpecificConfig struct {
@@ -14,6 +17,8 @@ type AudioSpecificConfig struct {
 	SamplingFrequencyIndex byte
 	SamplingFrequency      int32
 	ChannelConfiguration   byte
+	ExtensionSamplingIndex byte
+	ExtensionObjectType    byte
 }
 
 //从aac头提取audiospecificconfig
@@ -67,6 +72,12 @@ func GenerateAudioSpecificConfig(data []byte) (asc AudioSpecificConfig) {
 	}
 
 	asc.ChannelConfiguration = (data[cur] & 0x78) >> 3
+
+	if asc.AudioObjectType == AAC_HE_OR_SBR {
+		asc.ExtensionSamplingIndex = ((data[cur] & 0x7 << 1) | (data[cur+1] >> 7))
+		cur++
+		asc.ExtensionObjectType = ((data[cur] & 0x7c) >> 2)
+	}
 	return
 }
 
