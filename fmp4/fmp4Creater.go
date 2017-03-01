@@ -669,7 +669,7 @@ func (this *FMP4Creater) createAudioInitSeg(tag *flvFileReader.FlvTag) (slice *F
 		return
 	}
 	log.Println(slice)
-	fp, err := os.Create("initA.mp4")
+	fp, err := os.Create("init.mp4")
 	if err != nil {
 		log.Println(err.Error())
 		return
@@ -707,7 +707,7 @@ func (this *FMP4Creater) createAudioSeg(tag *flvFileReader.FlvTag) (slice *FMP4S
 	//tfdt
 	sounBox.Push([]byte("tfdt"))
 	sounBox.Push4Bytes(0)
-	sounBox.Push4Bytes(tag.Timestamp)
+	sounBox.Push4Bytes(this.audioLastTime)
 	//!tfdt
 	sounBox.Pop()
 	//trun
@@ -730,12 +730,12 @@ func (this *FMP4Creater) createAudioSeg(tag *flvFileReader.FlvTag) (slice *FMP4S
 		log.Println(0x17)
 		log.Println(len(tag.Data))
 	} else {
-		sounBox.Push4Bytes(tag.Timestamp - this.audioLastTime)
+		sounBox.Push4Bytes(0x17)
 	}
 	//计算每一个采样的时长，根据采样率和samplerate来算
-	1024 / 44
+	//1024 / 44
 	log.Println(tag.Timestamp - this.audioLastTime)
-	this.audioLastTime = tag.Timestamp
+	this.audioLastTime += 0x17
 	sounBox.Push4Bytes(uint32(len(tag.Data) - dataPrefixLength)) //sample size
 	flags := &FMP4Flags{}
 	flags.SampleDependsOn = 1
@@ -780,7 +780,7 @@ func (this *FMP4Creater) createAudioSeg(tag *flvFileReader.FlvTag) (slice *FMP4S
 		return
 	}
 
-	fileName := "me" + strconv.Itoa(slice.Idx) + ".m4s"
+	fileName := "segment_" + strconv.Itoa(slice.Idx) + ".m4s"
 	fp, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE, 0666)
 	if err != nil {
 		log.Println(err.Error())
