@@ -55,12 +55,13 @@ type FMP4Creater struct {
 	audioInited   bool
 	audioLastTime uint32
 
-	width           int
-	height          int
-	fps             int
-	audioSampleSize uint32
-	audioSampleRate uint32
-	audioType       int
+	width               int
+	height              int
+	fps                 int
+	audioSampleSize     uint32
+	audioSampleRate     uint32
+	audioSampleDuration uint32
+	audioType           int
 }
 
 type FMP4Flags struct {
@@ -464,10 +465,21 @@ func (this *FMP4Creater) createAudioInitSeg(tag *flvFileReader.FlvTag) (slice *F
 		this.audioSampleSize = 1024
 		asc := aac.GenerateAudioSpecificConfig(tag.Data[2:])
 		this.audioSampleRate = uint32(asc.SamplingFrequency)
+		soundRate := ((tag.Data[0] & 0xC) >> 2)
+		switch soundRate {
+		case 0:
+			this.audioSampleDuration = this.audioSampleSize * 1000 / 5500
+		case 1:
+			this.audioSampleDuration = this.audioSampleSize * 1000 / 11000
+		case 2:
+			this.audioSampleDuration = this.audioSampleSize * 1000 / 22000
+		case 3:
+			this.audioSampleDuration = this.audioSampleSize * 1000 / 44000
+		}
 	default:
 		log.Fatal("unknown audio type")
 	}
-
+	log.Println(this.audioSampleDuration)
 	slice = &FMP4Slice{}
 	slice.Video = true
 	slice.Idx = -1
@@ -726,16 +738,12 @@ func (this *FMP4Creater) createAudioSeg(tag *flvFileReader.FlvTag) (slice *FMP4S
 	sounBox.Push4Bytes(0x79)  //offset:if base-is-moof ,data offset,from moov begin to mdat data,so now base is first byte
 	if tag.Timestamp-this.audioLastTime == 0 {
 		//no duration,just a first frame
-		sounBox.Push4Bytes(0x17) //duration
-		log.Println(0x17)
-		log.Println(len(tag.Data))
+		sounBox.Push4Bytes(this.audioSampleDuration) //duration
 	} else {
-		sounBox.Push4Bytes(0x17)
+		sounBox.Push4Bytes(this.audioSampleDuration)
 	}
-	//计算每一个采样的时长，根据采样率和samplerate来算
-	//1024 / 44
 	log.Println(tag.Timestamp - this.audioLastTime)
-	this.audioLastTime += 0x17
+	this.audioLastTime += this.audioSampleDuration
 	sounBox.Push4Bytes(uint32(len(tag.Data) - dataPrefixLength)) //sample size
 	flags := &FMP4Flags{}
 	flags.SampleDependsOn = 1
