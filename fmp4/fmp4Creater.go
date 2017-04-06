@@ -325,13 +325,13 @@ func (this *FMP4Creater) createVideoInitSeg(tag *flvFileReader.FlvTag) (slice *F
 		return
 	}
 	log.Println(slice)
-	//	fp, err := os.OpenFile("init.mp4", os.O_WRONLY|os.O_CREATE, 0666)
-	//	if err != nil {
-	//		log.Println(err.Error())
-	//		return
-	//	}
-	//	defer fp.Close()
-	//	fp.Write(slice.Data)
+	fp, err := os.OpenFile("video/init.mp4", os.O_WRONLY|os.O_CREATE, 0666)
+	if err != nil {
+		log.Println(err.Error())
+		return
+	}
+	defer fp.Close()
+	fp.Write(slice.Data)
 	return
 }
 
@@ -346,6 +346,19 @@ func (this *FMP4Creater) createVideoSeg(tag *flvFileReader.FlvTag) (slice *FMP4S
 	flags := &FMP4Flags{}
 	flags.IsLeading = 0
 	flags.SampleHasRedundancy = 0
+	//ignore sei
+	seiLength := 0
+	if tag.Data[0] == 0x17 {
+		if (tag.Data[9]&0x1f) == 0x06 && false {
+			log.Println("sei ...")
+			seiLength = (int(tag.Data[5]) << 24) | (int(tag.Data[6]) << 16) |
+				(int(tag.Data[7]) << 8) | (int(tag.Data[8]) << 0)
+			log.Println(seiLength + 4)
+			seiLength += 4
+			log.Println(tag.Data[5+seiLength:])
+		}
+	}
+
 	if tag.Data[0] == 0x17 {
 		flags.SampleDependsOn = 2
 		flags.SampleIsDependedOn = 1
@@ -398,7 +411,7 @@ func (this *FMP4Creater) createVideoSeg(tag *flvFileReader.FlvTag) (slice *FMP4S
 	composition := (uint32(tag.Data[2]) << 16) | (uint32(tag.Data[3]) << 8) | (uint32(tag.Data[4]) << 0)
 	//log.Println(fmt.Sprintf("timestame:%d  composition:%d duration:%d", tag.Timestamp, composition, tag.Timestamp-this.videoLastTime))
 	this.videoLastTime = tag.Timestamp
-	videBox.Push4Bytes(uint32(len(tag.Data) - 5)) //sample size,mdat data size
+	videBox.Push4Bytes(uint32(len(tag.Data) - (5 + seiLength))) //sample size,mdat data size
 	videBox.PushByte(uint8((flags.IsLeading << 2) | flags.SampleDependsOn))
 	videBox.PushByte(uint8((flags.SampleIsDependedOn << 6) | (flags.SampleHasRedundancy << 4) | flags.IsAsync))
 	videBox.Push2Bytes(0)
@@ -422,7 +435,7 @@ func (this *FMP4Creater) createVideoSeg(tag *flvFileReader.FlvTag) (slice *FMP4S
 	}
 
 	//mdat
-	err = segEncoder.EncodeInt32(int32(len(tag.Data) - 5 + 8))
+	err = segEncoder.EncodeInt32(int32(len(tag.Data) - (5 + seiLength) + 8))
 	if err != nil {
 		log.Println(err.Error())
 		return
@@ -432,21 +445,22 @@ func (this *FMP4Creater) createVideoSeg(tag *flvFileReader.FlvTag) (slice *FMP4S
 		log.Println(err.Error())
 		return
 	}
-	err = segEncoder.AppendByteArray(tag.Data[5:])
+	err = segEncoder.AppendByteArray(tag.Data[5+seiLength:])
 	//!mdat
 	slice.Data, err = segEncoder.GetData()
 	if err != nil {
 		log.Println(err.Error())
 		return
 	}
-	//	fileName := "segment_" + strconv.Itoa(slice.Idx) + ".m4s"
-	//	fp, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE, 0666)
-	//	if err != nil {
-	//		log.Println(err.Error())
-	//		return
-	//	}
-	//	defer fp.Close()
-	//	fp.Write(slice.Data)
+	fileName := "video/segment_" + strconv.Itoa(slice.Idx) + ".m4s"
+	//fp, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE, 0666)
+	fp, err := os.Create(fileName)
+	if err != nil {
+		log.Println(err.Error())
+		return
+	}
+	defer fp.Close()
+	fp.Write(slice.Data)
 	return
 }
 
@@ -465,6 +479,8 @@ func (this *FMP4Creater) createAudioInitSeg(tag *flvFileReader.FlvTag) (slice *F
 		this.audioSampleSize = 1024
 		asc := aac.GenerateAudioSpecificConfig(tag.Data[2:])
 		this.audioSampleRate = uint32(asc.SamplingFrequency)
+		log.Println(asc.AudioObjectType)
+		log.Println(this.audioSampleRate)
 		soundRate := ((tag.Data[0] & 0xC) >> 2)
 		switch soundRate {
 		case 0:
@@ -681,7 +697,7 @@ func (this *FMP4Creater) createAudioInitSeg(tag *flvFileReader.FlvTag) (slice *F
 		return
 	}
 	log.Println(slice)
-	fp, err := os.Create("init.mp4")
+	fp, err := os.Create("audio/init.mp4")
 	if err != nil {
 		log.Println(err.Error())
 		return
@@ -736,13 +752,14 @@ func (this *FMP4Creater) createAudioSeg(tag *flvFileReader.FlvTag) (slice *FMP4S
 	sounBox.Push4Bytes(0xf01) //offset,duration,samplesize,composition
 	sounBox.Push4Bytes(1)     //1 sample
 	sounBox.Push4Bytes(0x79)  //offset:if base-is-moof ,data offset,from moov begin to mdat data,so now base is first byte
+
 	if tag.Timestamp-this.audioLastTime == 0 {
 		//no duration,just a first frame
 		sounBox.Push4Bytes(this.audioSampleDuration) //duration
 	} else {
 		sounBox.Push4Bytes(this.audioSampleDuration)
 	}
-	log.Println(tag.Timestamp - this.audioLastTime)
+	//log.Println(fmt.Sprintf("%d %d", this.audioLastTime, tag.Timestamp))
 	this.audioLastTime += this.audioSampleDuration
 	sounBox.Push4Bytes(uint32(len(tag.Data) - dataPrefixLength)) //sample size
 	flags := &FMP4Flags{}
@@ -788,8 +805,8 @@ func (this *FMP4Creater) createAudioSeg(tag *flvFileReader.FlvTag) (slice *FMP4S
 		return
 	}
 
-	fileName := "segment_" + strconv.Itoa(slice.Idx) + ".m4s"
-	fp, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE, 0666)
+	fileName := "audio/segment_" + strconv.Itoa(slice.Idx) + ".m4s"
+	fp, err := os.Create(fileName)
 	if err != nil {
 		log.Println(err.Error())
 		return
