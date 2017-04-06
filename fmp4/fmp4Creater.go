@@ -481,17 +481,27 @@ func (this *FMP4Creater) createAudioInitSeg(tag *flvFileReader.FlvTag) (slice *F
 		this.audioSampleRate = uint32(asc.SamplingFrequency)
 		log.Println(asc.AudioObjectType)
 		log.Println(this.audioSampleRate)
-		soundRate := ((tag.Data[0] & 0xC) >> 2)
-		switch soundRate {
-		case 0:
-			this.audioSampleDuration = this.audioSampleSize * 1000 / 5500
-		case 1:
-			this.audioSampleDuration = this.audioSampleSize * 1000 / 11000
-		case 2:
-			this.audioSampleDuration = this.audioSampleSize * 1000 / 22000
-		case 3:
-			this.audioSampleDuration = this.audioSampleSize * 1000 / 44000
+		//		soundRate := ((tag.Data[0] & 0xC) >> 2)
+		mpeg4Asc := aac.MP4AudioGetConfig(tag.Data[2:])
+		log.Println(mpeg4Asc)
+		if mpeg4Asc.Ext_object_type != 0 {
+			this.audioSampleRate = uint32(mpeg4Asc.Ext_sample_rate)
+		} else {
+			this.audioSampleRate = uint32(mpeg4Asc.Sample_rate)
 		}
+		this.audioSampleDuration = this.audioSampleSize * 1000 / this.audioSampleRate
+		//		switch soundRate {
+		//		case 0:
+		//			this.audioSampleDuration = this.audioSampleSize * 1000 / 5500
+		//		case 1:
+		//			this.audioSampleDuration = this.audioSampleSize * 1000 / 11000
+		//		case 2:
+		//			this.audioSampleDuration = this.audioSampleSize * 1000 / 22000
+		//		case 3:
+		//			this.audioSampleDuration = this.audioSampleSize * 1000 / 44000
+		//		}
+		log.Println(this.audioSampleDuration)
+		log.Println(this.audioSampleRate)
 	default:
 		log.Fatal("unknown audio type")
 	}
@@ -696,7 +706,7 @@ func (this *FMP4Creater) createAudioInitSeg(tag *flvFileReader.FlvTag) (slice *F
 		log.Println(err.Error())
 		return
 	}
-	log.Println(slice)
+	//	log.Println(slice)
 	fp, err := os.Create("audio/init.mp4")
 	if err != nil {
 		log.Println(err.Error())

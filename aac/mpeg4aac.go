@@ -1,5 +1,10 @@
 package aac
 
+import (
+	"log"
+	"wssAPI"
+)
+
 const (
 	AOT_NULL = iota
 	// Support?                Name
@@ -7,7 +12,7 @@ const (
 	AOT_AAC_LC       ///< Y                       Low Complexity
 	AOT_AAC_SSR      ///< N (code in SoC repo)    Scalable Sample Rate
 	AOT_AAC_LTP      ///< Y                       Long Term Prediction
-	AOT_SBR          ///< Y                       Spectral Band Replication
+	AOT_SBR          ///< Y                       Spectral Band Replication HE-AAC
 	AOT_AAC_SCALABLE ///< N                       Scalable
 	AOT_TWINVQ       ///< N                       Twin Vector Quantizer
 	AOT_CELP         ///< N                       Code Excited Linear Prediction
@@ -66,6 +71,118 @@ type MP4AACAudioSpecificConfig struct {
 	Frame_length_short int
 }
 
-func MP4AudioGetConfig(data []byte) (asc *MP4AACAudioSpecificConfig) {
+func getSampleRatesByIdx(idx int) int {
+	arrMpeg4AACSampleRates := [16]int{96000, 88200, 64000, 48000, 44100, 32000,
+		24000, 22050, 16000, 12000, 11025, 8000, 7350}
+	return arrMpeg4AACSampleRates[idx]
+}
 
+func getAudioChannels(idx int) int {
+	arr := []int{0, 1, 2, 3, 4, 5, 6, 8}
+	return arr[idx]
+}
+
+func MP4AudioGetConfig(data []byte) (asc *MP4AACAudioSpecificConfig) {
+	bitReader := &wssAPI.BitReader{}
+	bitReader.Init(data)
+	asc = &MP4AACAudioSpecificConfig{}
+	asc.Object_type = getObjectType(bitReader)
+	asc.Sampling_index, asc.Sample_rate = getSampleRate(bitReader)
+	asc.Chan_config = bitReader.ReadBits(4)
+	if asc.Chan_config < 8 {
+		asc.Channels = getAudioChannels(asc.Chan_config)
+	}
+	asc.Sbr = -1
+	asc.Ps = -1
+	if AOT_SBR == asc.Object_type || (AOT_PS == asc.Object_type &&
+		0 == (bitReader.CopyBits(3)&0x03) && 0 == (bitReader.CopyBits(9)&0x3f)) {
+		if AOT_PS == asc.Object_type {
+			asc.Ps = 1
+		}
+		asc.Ext_object_type = AOT_SBR
+		asc.Sbr = 1
+		asc.Ext_sampling_index, asc.Ext_sample_rate = getSampleRate(bitReader)
+		asc.Object_type = getObjectType(bitReader)
+		if asc.Object_type == AOT_ER_BSAC {
+			asc.Ext_chan_config = bitReader.ReadBits(4)
+		}
+	} else {
+		asc.Ext_object_type = AOT_NULL
+		asc.Ext_sample_rate = 0
+	}
+
+	if AOT_ALS == asc.Object_type {
+		log.Println("ALS")
+		bitReader.ReadBits(5)
+		als := bitReader.CopyBits(24)
+		if ((als>>16)&0xff) != 'A' || ((als>>8)&0xff) != 'L' || ((als)&0xff) != 'S' {
+			bitReader.ReadBits(24)
+		}
+		parseConfigALS(bitReader, asc)
+
+	}
+
+	if asc.Ext_object_type != AOT_SBR {
+		log.Println(bitReader.BitsLeft())
+		for bitReader.BitsLeft() > 15 {
+			if 0x2b7 == bitReader.CopyBits(11) {
+				bitReader.ReadBits(11)
+				asc.Ext_object_type = getObjectType(bitReader)
+				if asc.Ext_object_type == AOT_SBR {
+					asc.Sbr = bitReader.ReadBit()
+					if asc.Sbr == 1 {
+						asc.Ext_sampling_index, asc.Ext_sample_rate = getSampleRate(bitReader)
+						if asc.Ext_sample_rate == asc.Sample_rate {
+							asc.Sbr = -1
+						}
+					}
+					if bitReader.BitsLeft() > 11 && bitReader.ReadBits(11) == 0x548 {
+						asc.Ps = bitReader.ReadBit()
+					}
+					break
+				}
+			} else {
+				bitReader.ReadBit()
+			}
+		}
+	}
+
+	if asc.Sbr == 0 {
+		asc.Ps = 0
+	}
+	if (asc.Ps == -1 && asc.Object_type == AOT_AAC_LC) || (asc.Channels&^0x01) != 0 {
+		asc.Ps = 0
+	}
+	return
+}
+
+func parseConfigALS(bitReader *wssAPI.BitReader, asc *MP4AACAudioSpecificConfig) {
+	if bitReader.BitsLeft() < 112 {
+		return
+	}
+	if bitReader.ReadBits(8) != 'A' || bitReader.ReadBits(8) != 'L' || bitReader.ReadBits(8) != 'S' || bitReader.ReadBits(8) != 0 {
+		return
+	}
+	asc.Sample_rate = bitReader.Read32Bits()
+	bitReader.Read32Bits()
+	asc.Chan_config = 0
+	asc.Channels = bitReader.ReadBits(16) + 1
+}
+
+func getObjectType(bitReader *wssAPI.BitReader) (objectType int) {
+	objectType = bitReader.ReadBits(5)
+	if objectType == AOT_ESCAPE {
+		objectType = 32 + bitReader.ReadBits(6)
+	}
+	return
+}
+
+func getSampleRate(bitReader *wssAPI.BitReader) (sampleFreqIndex, sampleFreq int) {
+	sampleFreqIndex = bitReader.ReadBits(4)
+	if sampleFreqIndex == 0x0f {
+		sampleFreq = bitReader.ReadBits(24)
+	} else {
+		sampleFreq = getSampleRatesByIdx(sampleFreqIndex)
+	}
+	return
 }
