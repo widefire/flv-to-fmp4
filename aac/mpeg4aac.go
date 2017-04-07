@@ -140,6 +140,9 @@ func MP4AudioGetConfig(data []byte) (asc *MP4AACAudioSpecificConfig) {
 						asc.Ps = bitReader.ReadBit()
 					}
 					break
+				} else {
+					asc.Ext_sampling_index = asc.Sampling_index
+					asc.Ext_sample_rate = asc.Sample_rate
 				}
 			} else {
 				bitReader.ReadBit()
